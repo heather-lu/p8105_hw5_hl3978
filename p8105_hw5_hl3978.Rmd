@@ -24,7 +24,7 @@ Next, run this function 10000 times for each group size between 2 and 50. For ea
 
 ```{r}
 
-# b-day function: randomly draws “birthdays” for each person; checks whether there are duplicate birthdays in the group; and returns TRUE or FALSE based on the result.
+# b-day function: randomly draws birthdays for each person, checks whether there are duplicate birthdays in the group, and returns TRUE or FALSE.
 
 bday_match <- function(n) {
   birthdays <- sample(1:365, size = n, replace = TRUE)
@@ -199,3 +199,99 @@ The plot shows that the power of the one-sample t-test increases as the true mea
 The all samples line lies almost exactly on the dashed line, indicating that the sample mean μ̂ is an unbiased estimator of μ: averaged over all simulations, μ̂ is approximately equal to the true μ for each value.
 
 The rejected only line lies above the dashed line for small μ, when μ is between 1 and 3. If we only look at datasets where the null hypothesis was rejected, the average estimate μ̂ is too large compared with the true μ. 
+
+# Problem 3
+
+The Washington Post has gathered data on homicides in 50 large U.S. cities and made the data available through a GitHub repository here. You can read their accompanying article here.
+
+Describe the raw data. Create a city_state variable (e.g. “Baltimore, MD”) and then summarize within cities to obtain the total number of homicides and the number of unsolved homicides (those for which the disposition is “Closed without arrest” or “Open/No arrest”).
+
+For the city of Baltimore, MD, use the prop.test function to estimate the proportion of homicides that are unsolved; save the output of prop.test as an R object, apply the broom::tidy to this object and pull the estimated proportion and confidence intervals from the resulting tidy dataframe.
+
+Now run prop.test for each of the cities in your dataset, and extract both the proportion of unsolved homicides and the confidence interval for each. Do this within a “tidy” pipeline, making use of purrr::map, purrr::map2, list columns and unnest as necessary to create a tidy dataframe with estimated proportions and CIs for each city.
+
+Create a plot that shows the estimates and CIs for each city – check out geom_errorbar for a way to add error bars based on the upper and lower limits. Organize cities according to the proportion of unsolved homicides.
+
+```{r}
+# Read data directly from GitHub
+homicides <- read_csv(
+  "https://raw.githubusercontent.com/washingtonpost/data-homicides/master/homicide-data.csv"
+)
+
+```
+
+The Homicide data contains `r nrow(homicides)` observations and `r ncol(homicides)` variables.The raw dataset contains one row per homicide and 12 variables:
+.uid, reported_date, victim_last, victim_first, victim_race, victim_age, victim_sex, city, state, lat, lon, and disposition. These variables describe victim information (first and last name, age, sex, race), location (city, state, latitude, longitude), the date reported, and the case disposition.
+
+```{r}
+# Create city_state and summarize totals / unsolved
+
+homicides_city <- homicides |>
+  mutate(
+    city_state = str_c(city, ", ", state),
+    unsolved   = disposition %in% c("Closed without arrest", "Open/No arrest")
+  ) |>
+  group_by(city_state) |>
+  summarize(
+    total_homicides   = n(),
+    unsolved_homicides = sum(unsolved)
+  )
+
+homicides_city
+```
+
+```{r}
+#For the city of Baltimore, MD
+baltimore_counts <- homicides_city |>
+  filter(city_state == "Baltimore, MD")
+
+baltimore_counts
+
+# Run prop.test: x = unsolved, n = total
+baltimore_prop_test <- prop.test(
+  x = baltimore_counts$unsolved_homicides,
+  n = baltimore_counts$total_homicides
+)
+
+baltimore_prop_test_tidy <- tidy(baltimore_prop_test)
+
+baltimore_prop_test_tidy |>
+  select(estimate, conf.low, conf.high)
+```
+
+The estimated proportion of unsolved homicides in Baltimore, MD is `r baltimore_prop_test_tidy|>pull(estimate)|> round(2)`. The 95% confidence interval for the proportion of unsolved homicides in Baltimore, MD is [`r baltimore_prop_test_tidy |>pull(conf.low) |> round(2)` , `r baltimore_prop_test_tidy |>pull(conf.high)|> round(2)`]. 
+
+```{r}
+# prop.test for each of the cities in your dataset, and extract both the proportion of unsolved homicides and the confidence interval for each
+
+city_props <- homicides_city |>
+  mutate(
+    prop_test = map2(
+      unsolved_homicides, total_homicides,
+      ~ prop.test(x = .x, n = .y)
+    ),
+    prop_tidy = map(prop_test, tidy)
+  ) |>
+  unnest(prop_tidy) |>
+  select(
+    city_state,
+    total_homicides,
+    unsolved_homicides,
+    estimate, conf.low, conf.high
+  )
+
+city_props
+```
+```{r}
+#Create a plot that shows the estimates and CIs for each city
+city_props |> 
+  ggplot(aes(x = reorder(city_state, estimate), y = estimate, ymin = conf.low, ymax = conf.high)) + 
+  geom_point() + 
+  geom_errorbar(width = 0.2) + 
+  coord_flip() + 
+  labs(title = "Estimated proportion of unsolved homicides and 95% CI by city", x = "City, State", y = "Estimated proportion of unsolved homicides") + 
+  theme(axis.text.y = element_text(size = 5), plot.title = element_text(size = 10))
+
+```
+
+
